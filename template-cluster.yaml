@@ -1,0 +1,175 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: The template used to create an ECS Cluster from the ECS Console.
+
+Parameters:
+
+  ECRRepositoryName:
+    Type: String
+    Description: Specifies the ECR Repository Name with which the resources would
+      be associated
+    Default: ingrid
+
+  ECSClusterName:
+    Type: String
+    Description: Specifies the ECS Cluster Name with which the resources would be
+      associated
+    Default: IngridCluster
+
+  ECSNamespace:
+    Type: String
+    Description: Specifies the ECS Namespace with which the resources would be associated
+    Default: Ingrid
+
+  ECSTaskDefinitionName:
+    Type: String
+    Description: Specifies the ECS Task Definition Name with which the resources
+      would be associated
+    Default: IngridTask
+
+  ECSServiceName:
+    Type: String
+    Description: Specifies the ECS Service Name with which the resources would be
+      associated
+    Default: IngridService
+
+  VpcId:
+    Type: String
+    Description: Optional - Specifies the ID of an existing VPC in which to launch
+      your container instances. If you specify a VPC ID, you must specify a list of
+      existing subnets in that VPC. If you do not specify a VPC ID, a new VPC is created
+      with at least 1 subnet.
+    Default: ''
+    AllowedPattern: "^(?:vpc-[0-9a-f]{8,17}|)$"
+    ConstraintDescription: VPC Id must begin with 'vpc-' and have a valid uuid
+
+  SubnetIds:
+    Type: CommaDelimitedList
+    Description: Optional - Specifies the Comma separated list of existing VPC Subnet
+      Ids where ECS instances will run
+    Default: ''
+
+  ProdContainerPort:
+    Type: Number
+    Description: Container port of app requiring ELB exposure
+    Default: '80'
+
+  TestContainerPort:
+    Type: Number
+    Description: Container port of app requiring ELB exposure
+    Default: '8080'
+
+Resources:
+
+  # ======= #
+  #   ECR
+  # ======= #
+  ECRRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: !Ref ECRRepositoryName
+
+
+  # ======= #
+  #   ECS
+  # ======= #
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName:
+        Ref: ECSClusterName
+      CapacityProviders:
+        - FARGATE
+        - FARGATE_SPOT
+      ClusterSettings:
+        - Name: containerInsights
+          Value: disabled
+      Configuration:
+        ExecuteCommandConfiguration:
+          Logging: DEFAULT
+#      ServiceConnectDefaults:
+#        Namespace: !Ref ECSNamespace
+#      Tags: []
+
+  ECSTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      ContainerDefinitions:
+        - Name: !Ref ECSTaskDefinitionName
+          Image: !Sub '${ECRRepository.RepositoryUri}:latest'
+          PortMappings:
+            - ContainerPort: 80
+              HostPort: 80
+              Protocol: tcp
+              AppProtocol: http
+          Essential: true
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-create-group: true
+              awslogs-group: !Sub '/ecs/${ECSTaskDefinitionName}'
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: ecs
+      Family: !Ref ECSTaskDefinitionName
+      ExecutionRoleArn: arn:aws:iam::968127021175:role/ecsTaskExecutionRole
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: 512
+      Memory: 1024
+      RuntimePlatform:
+        CpuArchitecture: X86_64
+        OperatingSystemFamily: LINUX
+
+
+
+  ECSService:
+    Type: AWS::ECS::Service
+    Properties:
+      Cluster: !Ref ECSCluster
+      CapacityProviderStrategy:
+        - CapacityProvider: FARGATE
+          Base: 0
+          Weight: 1
+      TaskDefinition: !Ref ECSTaskDefinition
+      ServiceName: !Ref ECSServiceName
+      SchedulingStrategy: REPLICA
+      DesiredCount: 0
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - sg-0fc17f38342687c9c
+          Subnets:
+            - subnet-02c1bdb43bfe0ce16
+            - subnet-038c4401eeb202ec7
+      PlatformVersion: LATEST
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 100
+#        DeploymentCircuitBreaker:
+#          Enable: true
+#          Rollback: true
+      DeploymentController:
+        Type: CODE_DEPLOY
+      LoadBalancers:
+        - TargetGroupArn: arn:aws:elasticloadbalancing:eu-south-2:968127021175:targetgroup/target-group-1/409cb498a0e3b34a
+          ContainerName: !Ref ECSTaskDefinitionName
+          ContainerPort: !Ref ProdContainerPort
+#          LoadBalancerName: testELB
+      ServiceConnectConfiguration:
+        Enabled: false
+      Tags: [ ]
+      EnableECSManagedTags: true
+
+
+    # =========== #
+    #   Outputs
+    # =========== #
+
+#Outputs:
+#
+#  ECSCluster:
+#    Description: The created cluster.
+#    Value:
+#      Ref: ECSCluster
